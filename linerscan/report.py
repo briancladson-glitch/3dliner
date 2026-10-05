@@ -134,7 +134,8 @@ def fig_profile(res: ScanResult, engine: EngineSpec, limits: ReportLimits, path:
     a1.axvline(engine.bore, color=MUTED, lw=1, ls=(0, (4, 3)))
     _depth_axis(a1, res, engine)
     top = a1.get_ylim()[1]
-    a1.text(engine.bore, top, f" nominal {engine.bore:.0f}", color=INK2, fontsize=6.5, va="top")
+    a1.text(engine.bore, top + 0.04 * (a1.get_ylim()[0] - top), f" nominal {engine.bore:.0f}", color=INK2,
+            fontsize=6.5, va="top")
     lim = engine.bore + limits.wear_limit(engine.bore)
     x0, x1 = engine.bore - 0.3, max(dmax.max(), engine.bore) + 0.35
     if lim < x1 + 0.5:
@@ -142,8 +143,8 @@ def fig_profile(res: ScanResult, engine: EngineSpec, limits: ReportLimits, path:
         a1.text(lim, top, " wear limit*", color=LIMIT_C, fontsize=6.5, va="top")
         x1 = max(x1, lim + 0.3)
     else:
-        a1.text(0.99, 0.01, f"wear limit* {lim:.2f} mm: off scale", transform=a1.transAxes, ha="right",
-                va="bottom", color=LIMIT_C, fontsize=6.3)
+        a1.set_title(f"wear limit* {lim:.2f} mm (off scale)", loc="right", color=LIMIT_C, fontsize=6.5,
+                     fontweight="normal")
     a1.set_xlim(min(x0, dmin.min() - 0.1), x1)
     a1.set_xlabel("Diameter (mm, as measured)")
     a1.set_title("Diameter profile", loc="left")
@@ -520,8 +521,9 @@ def build_report(res: ScanResult, cal: DeviceCalibration, engine: EngineSpec, jo
                   f"{res.depth_range[0]:.0f} to {res.depth_range[1]:.0f} mm below the liner top: "
                   f"{len(res.profile)} bands of 30 mm, each measured all around the bore.", S["small"]),
         Spacer(1, 2),
-        Paragraph(f"• Coverage: every non-port band ≥ {min((b.coverage_pct for b in allb), default=0):.0f}% of "
-                  f"1° sectors.<br/>• Outliers marked: {100 * res.n_outliers / max(res.n_points, 1):.2f}% of points."
+        Paragraph(f"• Coverage: at least {min((b.coverage_pct for b in allb), default=0):.0f}% of 1° sectors in "
+                  f"every non-port band.<br/>• Outliers marked: "
+                  f"{100 * res.n_outliers / max(res.n_points, 1):.2f}% of points."
                   "<br/>• Ring check: "
                   + ("; ".join(f"{r['when']} {r['error'] * 1000:+.0f} µm" for r in cal.ring_checks) or "not recorded") +
                   f"<br/>• Flagged bands: {n_flag} (ports, ridge, shape) — see appendix."

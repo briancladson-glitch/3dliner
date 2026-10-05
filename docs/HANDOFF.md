@@ -14,13 +14,21 @@ Status on 2026-10-05. Everything runs in simulation: there is no hardware, no en
 | Crush safety | Planned stop angle plus ToF WARN / ALARM / time-to-contact / FAULT, buzzer, independent of the radio. | Overshoot scenario with the **radio dead**: alarm, operator stops, more than 5 mm left; ToF failure → FAULT → stop |
 | Report | 7-page PDF: summary, VAK-style table, profile, wall map, cross-sections, 3D view, QA, method, sign-off, full band appendix. | `examples/LinerScan_example_report.pdf` |
 
-**Tests:** `pytest -q` → **{N_TESTS} passed** (about {T_TESTS} min; factory calibrations are cached per session). `ruff check .` is clean.
+**Tests:** `pytest -q` → **43 passed** (about 8 min; factory calibrations are cached per session). `ruff check .` is clean.
 
 **Simulation error figures** (measured − truth, every 30 mm band outside the port zone and the ring-reversal ridge; full table in `docs/VALIDATION.md`):
 
-{VAL_TABLE}
+| Case (simulated) | Bands | Worst \|error\| D_FA / D_PS / ovality / D max / D min (mm) | RMS D_FA / D_PS (mm) | Height error max |
+|---|---:|---|---|---:|
+| S preset, 450 bore, liner 62 °C | 54 | 0.006 / 0.013 / 0.014 / 0.005 / 0.011 | 0.002 / 0.007 | 2.8 mm |
+| M preset, 650 bore, 62 °C | 75 | 0.011 / 0.007 / 0.015 / 0.011 / 0.009 | 0.006 / 0.003 | 4.2 mm |
+| L preset, 980 bore, 62 °C | 78 | 0.017 / 0.013 / 0.016 / 0.013 / 0.016 | 0.006 / 0.005 | 1.2 mm |
+| L preset, 980 bore, 62 °C, second seed | 78 | 0.017 / 0.014 / 0.017 / 0.015 / 0.014 | 0.006 / 0.007 | 1.3 mm |
+| L preset, 980 bore, **80 °C** | 78 | 0.020 / 0.013 / 0.015 / 0.015 / 0.019 | 0.008 / 0.006 | 1.1 mm |
 
-The spec is ±0.05 mm. The worst band in every case is below {WORST} mm, including a liner at **80 °C**. With thermal compensation switched off, the same 80 °C scan is out by **{NOCOMP} mm**, so the compensation is essential.
+At the 15–16 standard measuring positions (the VAK-style table) the worst error is 0.016 mm. In the scavenge-port bands it is 0.013 mm. At the ring-reversal ridge, where D changes by more than 0.1 mm inside a 30 mm band, it is 0.07 mm; those bands are flagged "steep" in the report. Yaw comes from the port pattern to within 0.2–0.3°. Device tilt is recovered within 0.02°. Every case uses about 2.26 M points from about 60 k frames, and about 0.2 % of points are marked as outliers.
+
+The spec is ±0.05 mm. The worst band in every case is below 0.020 mm, including a liner at **80 °C**. With thermal compensation switched off, the same 80 °C scan is out by **2.7 mm**, so the compensation is essential.
 
 **Example report:** `examples/LinerScan_example_report.pdf`, a simulated 980-bore liner at 62 °C. The band data is in `examples/example_bands.csv` and the BLE status log in `examples/example_ble_status.jsonl`. Regenerate with `linerscan example`.
 
@@ -64,4 +72,4 @@ The spec is ±0.05 mm. The worst band in every case is below {WORST} mm, includi
 
 ## Budget
 
-I estimate roughly USD {SPEND} of credit used, from tool-call and context volume. The session does not show exact spend. Work stopped well before the USD 85 line.
+I estimate roughly USD 30–60 of credit used, from token volume. The session does not show exact spend. Work stopped well before the USD 85 line.

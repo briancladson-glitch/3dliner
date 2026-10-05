@@ -1,0 +1,17 @@
+{
+  "report_no": "LS-2026-0001-SIM",
+  "vessel": "MV Example (simulated vessel)",
+  "imo": "\u2014",
+  "engine_maker_type": "2-stroke crosshead, 980 bore (simulated)",
+  "engine_serial": "\u2014",
+  "cylinder": "3",
+  "running_hours": "38 450 (example)",
+  "hours_since_overhaul": "11 200 (example)",
+  "location": "Dubai anchorage (simulated)",
+  "date": "2026-10-05",
+  "surveyor": "UMA Marine \u2014 name to be entered",
+  "client": "\u2014 (example)",
+  "yaw_deg": 90.0,
+  "stop_angle_read_deg": 15.3,
+  "liner_temperature_c": 62.0
+}
