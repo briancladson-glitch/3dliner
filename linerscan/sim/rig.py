@@ -76,3 +76,19 @@ def factory_calibration(preset: OpticalPreset, cam: CameraTruth, head: HeadTruth
     rc = calibrate_ring(z, th, ph, ring.D_at_temp, g0, h_measured=h_meas)
     return DeviceCalibration(preset.name, tri, HeadGeometry(rc.R0, rc.h, dev.optics_height), ring_D20,
                              rc.D_measured, rc.rms, T_lab)
+
+
+def ring_check(cal: DeviceCalibration, cam: CameraTruth, head: HeadTruth, T: float, rng: np.random.Generator,
+               when: str = "before", ring_D20: float | None = None) -> dict:
+    """Field check in the master ring (before / after a job) with the full calibration incl. thermal model."""
+    from ..config import ProcessingConfig
+    from ..geometry import device_points
+    from ..pipeline import _robust_cylinder
+
+    ring = RingModel(ring_D20 or cal.ring_D20, temperature_c=T)
+    u, th = ring_scan(cam, head, ring, T, rng)
+    z, th, ph = ring_points(cal.triangulation, u, th, T)
+    P = device_points(z, th, ph, cal.geometry)
+    cyl, _ = _robust_cylinder(P, ProcessingConfig())
+    err = 2 * cyl.R - ring.D_at_temp
+    return {"when": when, "T": T, "D_known": ring.D_at_temp, "D_meas": 2 * cyl.R, "error": float(err)}

@@ -32,6 +32,7 @@ from .fitting import (
     fit_fourier,
     fourier_residuals,
     outlier_mask,
+    refine_axis_with_shape,
     rotation_to_z,
 )
 from .geometry import wall_polar
@@ -76,6 +77,16 @@ class HeightModel:
     t_tof: np.ndarray = field(repr=False)
     roof_smooth: np.ndarray = field(repr=False)
     noise: float = 0.0
+    s_stop_flywheel: float = float("nan")
+    top_edge_frames: int = 0
+    source: str = ""
+
+    @property
+    def stop_source(self) -> str:
+        if self.top_edge_frames:
+            return (f"liner-top edge seen at the stop ({self.top_edge_frames} frames; flywheel reading differs by "
+                    f"{self.s_stop_flywheel - self.s_stop:+.1f} mm)")
+        return "stop crank angle read at the flywheel"
 
     def __call__(self, t):
         return self.A + self.B * np.interp(t, self.t_tof, self.roof_smooth)
@@ -104,31 +115,65 @@ def _local_linear(t, y, half_window):
     return out
 
 
-def height_model(raw: RawScan, engine: EngineSpec, job: JobInfo, smooth_s: float = 1.5) -> HeightModel:
-    """Crown depth s_c(t) = A + B·roof(t); A, B from the BDC start and the stop crank angle read at the flywheel."""
-    t = raw.tof_t
-    roof = np.array([roof_distance(r) for r in raw.tof])
+def top_edge_anchor(raw: RawScan, cal: DeviceCalibration | None, t_after: float, min_frames: int = 200):
+    """Crown depth at the stop from the liner-top edge: the highest row that still sees wall, in every frame
+    taken after the piston stopped.  Depth 0 = crown depth − edge height, averaged over all head angles (so a
+    device tilt averages out).  Returns (crown depth, frames used) or None if the edge is not inside the strip."""
+    if cal is None:
+        return None
+    m = raw.frame_t > t_after
+    U = raw.u[m]
+    if U.shape[0] < min_frames:
+        return None
+    valid = np.isfinite(U)
+    K = U.shape[1]
+    top = K - 1 - np.argmax(valid[:, ::-1], axis=1)
+    ok = valid.any(1) & (top < K - 1) & (top > K // 3)
+    if ok.sum() < min_frames:
+        return None
+    tri, g = cal.triangulation, cal.geometry
+    f = np.nonzero(ok)[0]
+    k = top[ok]
+    T = np.interp(raw.frame_t[m][ok], raw.temp_t, raw.temps[:, 0])
+    z = tri.z(U[f, k], k, T)
+    x = z * np.cos(tri.phi[k])
+    h_edge = g.H0 + 0.5 * x * (np.tan(tri.phi[k]) + np.tan(tri.phi[k + 1]))
+    return float(np.median(h_edge)), int(ok.sum())
+
+
+def height_model(raw: RawScan, engine: EngineSpec, job: JobInfo, smooth_s: float = 1.5,
+                 cal: DeviceCalibration | None = None) -> HeightModel:
+    """Crown depth s_c(t) = A + B·roof(t).  A, B from two anchors: BDC at the start, and at the stop the
+    liner-top edge seen by the scanner (fallback: the stop crank angle read at the flywheel)."""
+    source = "laser rangefinder"
+    if raw.rf.size >= 100 and np.isfinite(raw.rf).mean() > 0.5:
+        t, roof = raw.rf_t, raw.rf
+    else:
+        source = "multizone ToF (central zones)"
+        t = raw.tof_t
+        roof = np.array([roof_distance(r) for r in raw.tof])
     ok = np.isfinite(roof)
     t, roof = t[ok], roof[ok]
     ev = {e[2].split()[0]: e[0] for e in raw.events if e[1] == "state"}
-    t_scan = ev.get("SCAN", t[0])
+    t_arm = ev.get("ARMED", t[0])
     t_stop = ev.get("STOPPED", t[-1])
-    pre = (t < t_scan - 8.0) & (t > t_scan - 60.0)
+    # procedure: the turning gear is started ≥ 10 s after the base station shows ARMED (piston still at BDC)
+    pre = (t >= t_arm) & (t <= t_arm + 5.0)
     if pre.sum() < 10:
-        pre = t < t_scan - 8.0
-    post = t > t_stop - 4.0
+        pre = t <= t[0] + 5.0
+    post = t > t_stop - 4.0  # STOPPED is declared ≥ 6 s after the piston stopped
     roof0, roof1 = float(np.median(roof[pre])), float(np.median(roof[post]))
     if job.stop_angle_read_deg is None:
         raise ValueError("stop crank angle (read at the flywheel) is required for the height reference")
     s0 = float(crown_depth(180.0, engine))
-    s1 = float(crown_depth(abs(job.stop_angle_read_deg), engine))
+    s1_fw = float(crown_depth(abs(job.stop_angle_read_deg), engine))
+    edge = top_edge_anchor(raw, cal, t_stop - 4.0)
+    s1, n_edge = (edge if edge is not None else (s1_fw, 0))
     B = (s0 - s1) / (roof0 - roof1)
     A = s0 - B * roof0
     sm = _local_linear(t, roof, smooth_s)
-    sm[t <= t_scan - 8.0] = roof0
-    sm[t >= t_stop - 4.0] = roof1
     noise = float(np.std(roof[post] - roof1))
-    return HeightModel(A, B, roof0, roof1, s0, s1, t, sm, noise)
+    return HeightModel(A, B, roof0, roof1, s0, s1, t, sm, noise, s1_fw, n_edge, source)
 
 
 # --------------------------------------------------------------------------- bands
@@ -153,6 +198,11 @@ class BandResult:
     flags: list[str]
     U_k2: float = 0.0  # expanded uncertainty of a diameter (k=2), statistical + systematic
     coef: np.ndarray | None = field(default=None, repr=False)
+    axial_gradient: float = 0.0  # change of mean diameter per mm of depth (mm/mm), from the taper term
+
+    @property
+    def steep(self) -> bool:
+        return any(f.startswith("steep axial gradient") for f in self.flags)
 
 
 def _robust_cylinder(P: np.ndarray, cfg: ProcessingConfig, rounds: int = 3) -> tuple[CylinderFit, np.ndarray]:
@@ -177,11 +227,13 @@ def analyze_band(pts: Points, idx: np.ndarray, lo: float, hi: float, yaw_deg: fl
         return None
     flags: list[str] = []
     cyl, keep = _robust_cylinder(P, cfg)
+    s = pts.depth[idx]
     if cfg.tilt_mode == "global" and axis_dir is not None:
         cyl = CylinderFit(cyl.point, axis_dir, cyl.R, cyl.rms, cyl.n, cyl.z_ref)
+    elif cfg.tilt_mode == "per_band":
+        cyl = refine_axis_with_shape(P, s if cfg.fourier_taper else None, cyl, cfg.fourier_order, keep)
     Rm = rotation_to_z(cyl.direction)
     Q = (P - cyl.point) @ Rm.T
-    s = pts.depth[idx]
     circ = fit_circle(Q[keep, 0], Q[keep, 1])
     x, y = Q[:, 0] - circ.xc, Q[:, 1] - circ.yc
     rho = np.hypot(x, y)
@@ -216,6 +268,10 @@ def analyze_band(pts: Points, idx: np.ndarray, lo: float, hi: float, yaw_deg: fl
             flags.append(f"shape not elliptical (ellipse vs Fourier {edev:.3f} mm)")
     except (ValueError, np.linalg.LinAlgError):
         flags.append("ellipse fit failed")
+    grad = 2.0 * float(fit.coef[-1]) if cfg.fourier_taper else 0.0
+    if abs(grad) * (hi - lo) > cfg.gradient_flag_mm:
+        flags.append(f"steep axial gradient: D changes {abs(grad) * (hi - lo):.2f} mm across the band "
+                     "(value depends on the exact height)")
     n_out = int((~inl).sum())
     tx, ty = cyl.tilt_deg
     u_stat = max(st.u_D_FA, st.u_D_PS)
@@ -228,7 +284,7 @@ def analyze_band(pts: Points, idx: np.ndarray, lo: float, hi: float, yaw_deg: fl
     ac = cyl.axis_xy_at(0.0)
     return BandResult(0.5 * (lo + hi), lo, hi, int(len(P)), n_out, cov, max_gap, port, (tx, ty),
                       (float(ac[0]), float(ac[1])), circ.D, circ.rms, fit.sigma, st, ell, edev, flags,
-                      2 * float(np.hypot(u_stat, u_sys)), fit.coef)
+                      2 * float(np.hypot(u_stat, u_sys)), fit.coef, grad)
 
 
 # --------------------------------------------------------------------------- yaw from the port pattern
@@ -251,7 +307,7 @@ def estimate_yaw_from_ports(raw: RawScan, cal: DeviceCalibration, hm: HeightMode
         return None
     th = np.broadcast_to(raw.frame_theta[:, None], depth.shape)[sel] + np.arctan2(g.h, g.R0 + x_nom)
     # azimuth about the liner centre of the wall point hit by a ray leaving the device axis at angle th
-    C = -np.asarray(centre_xy)
+    C = np.asarray(centre_xy, float)  # liner centre in the device frame
     e = np.column_stack([np.cos(th), np.sin(th)])
     ce = e @ C
     R = engine.bore / 2
@@ -299,9 +355,10 @@ class ScanResult:
 
 
 def process(raw: RawScan, cal: DeviceCalibration, engine: EngineSpec, job: JobInfo,
-            cfg: ProcessingConfig | None = None, u_sys: float = 0.0, refine_yaw: bool = True) -> ScanResult:
+            cfg: ProcessingConfig | None = None, u_sys: float = 0.0, refine_yaw: bool = True,
+            do_profile: bool = True) -> ScanResult:
     cfg = cfg or ProcessingConfig()
-    hm = height_model(raw, engine, job)
+    hm = height_model(raw, engine, job, cal=cal)
     pts = raw_to_points(raw, cal, hm)
     order = np.argsort(pts.depth)
     for k in ("P", "t", "s_c", "row", "depth"):
@@ -345,7 +402,7 @@ def process(raw: RawScan, cal: DeviceCalibration, engine: EngineSpec, job: JobIn
     collect = {"alpha": [], "depth": [], "rho": [], "out_alpha": [], "out_depth": []}
     profile = []
     start = np.floor(dmin / cfg.band_step) * cfg.band_step
-    for lo in np.arange(start, dmax, cfg.band_step):
+    for lo in np.arange(start, dmax, cfg.band_step) if do_profile else []:
         hi = lo + cfg.band_height
         if lo < dmin - cfg.band_height / 3 or hi > dmax + cfg.band_height / 3:
             continue

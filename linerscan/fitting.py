@@ -332,3 +332,35 @@ def fit_ellipse(x: np.ndarray, y: np.ndarray) -> EllipseFit:
     major_dir = vec[:, i_major]
     ang = float(np.degrees(np.arctan2(major_dir[1], major_dir[0])) % 180.0)
     return EllipseFit(float(x0 * s + mx), float(y0 * s + my), float(ax.max() * s), float(ax.min() * s), ang)
+
+
+def refine_axis_with_shape(P: np.ndarray, s: np.ndarray | None, cyl: CylinderFit, order: int = 8,
+                           keep: np.ndarray | None = None) -> CylinderFit:
+    """Re-estimate the axis direction with the cross-section modelled as an order-N Fourier profile.
+
+    A plain cylinder fit treats ovality and other harmonics as noise; when the head angle and the strip
+    height are correlated (fast piston, few sweeps per band) that shape leaks into the tilt.  Here the tilt
+    (tx, ty) is found by LM while the Fourier coefficients (and taper) are solved linearly for every trial
+    axis (variable projection).  The axis point stays from the cylinder fit; the n = 1 terms absorb it.
+    """
+    P = np.asarray(P, float)
+    m = np.ones(len(P), bool) if keep is None else keep
+    Pk = P[m]
+    sk = None if s is None else np.asarray(s, float)[m]
+    d0 = cyl.direction
+
+    def res(q):
+        u = _axis_dir(q[0], q[1])
+        Q = (Pk - cyl.point) @ rotation_to_z(u).T
+        a = np.arctan2(Q[:, 1], Q[:, 0])
+        r = np.hypot(Q[:, 0], Q[:, 1])
+        A = fourier_design(a, order)
+        if sk is not None:
+            A = np.column_stack([A, sk - sk.mean()])
+        coef, *_ = np.linalg.lstsq(A, r, rcond=None)
+        return r - A @ coef
+
+    q0 = np.array([d0[0] / d0[2], d0[1] / d0[2]])
+    sol = least_squares(res, q0, method="lm", x_scale=np.array([1e-3, 1e-3]), diff_step=1e-6)
+    u = _axis_dir(sol.x[0], sol.x[1])
+    return CylinderFit(cyl.point, u, cyl.R, float(np.sqrt(np.mean(sol.fun**2))), int(m.sum()), cyl.z_ref)

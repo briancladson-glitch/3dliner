@@ -73,11 +73,14 @@ class SafetyMonitor:
             self.sensor_ok[i] = bool(ok)
             if ok:
                 per.append(self._robust_min(vert[foot]))
-                med.append(float(np.median(vert[foot])))
+                cz = valid & self._central
+                if cz.any():
+                    med.append(float(np.median(vert[cz])))
         if per:
             self.last_valid_t = t
             self.clearance = min(per) - c.sensor_to_top
-            self.hist.append((t, float(np.mean(med))))
+            if med:
+                self.hist.append((t, float(np.mean(med))))
             while self.hist and self.hist[0][0] < t - c.trend_window_s:
                 self.hist.popleft()
             if len(self.hist) >= 5:
@@ -115,18 +118,16 @@ class SafetyMonitor:
         return PATTERN[self.state]
 
 
-def roof_distance(ranges: np.ndarray, footprint_mm: float = 200.0, fov_deg: float = 45.0) -> float:
-    """Vertical distance to the roof (median of the zones above the device footprint), mean of both sensors.
+def roof_distance(ranges: np.ndarray, fov_deg: float = 45.0, k: int = 2) -> float:
+    """Vertical distance to the lowest overhead feature seen by the central zones (height reference).
 
-    ``ranges``: (2, 64).  Used for the height reference after retrieval; NaN if no sensor has data.
+    Only the 4 central zones of each sensor are used (outer zones reach the liner wall on small bores), and the
+    k-th smallest of them is taken: the lowest feature (exhaust-valve face) stays the reference even when some
+    zone footprints move onto the higher cover dome as the range changes.  The noise bias of an order statistic
+    grows linearly with range and is absorbed by the two-anchor scale.  ``ranges``: (2, 64).
     """
     g = zone_angles(fov_deg)
     central = g <= g.min() + 1e-9
-    out = []
-    for r in np.asarray(ranges, float):
-        valid = np.isfinite(r)
-        rr = np.where(valid, r, np.inf)
-        foot = valid & ((rr * np.sin(g) <= footprint_mm) | central)
-        if foot.sum() >= 2:
-            out.append(float(np.median(rr[foot] * np.cos(g[foot]))))
-    return float(np.mean(out)) if out else float("nan")
+    r = np.asarray(ranges, float)[:, central] * np.cos(g[central])
+    v = np.sort(r[np.isfinite(r)])
+    return float(v[min(k - 1, v.size - 1)]) if v.size >= 2 else float("nan")

@@ -108,3 +108,9 @@ def plan_scan(e: EngineSpec, d: DeviceSpec, p: OpticalPreset, turning_gear_rpm: 
     return ScanPlan(p.name, float(stop), turning_gear_rpm, float(duration), vmax, float(strip),
                     float(sweep_rate), frame_rate, float(sweep_rate / frame_rate), top, bottom, float(pts),
                     float(alarm), float(warn))
+
+
+def preset_for_bore_safe(bore: float):
+    from .config import preset_for_bore
+
+    return preset_for_bore(bore)

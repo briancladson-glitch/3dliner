@@ -17,3 +17,8 @@ def get_cal(preset: str) -> DeviceCalibration:
 @pytest.fixture(scope="session")
 def cal_L():
     return get_cal("L")
+
+
+@pytest.fixture(scope="session")
+def cal_S():
+    return get_cal("S")

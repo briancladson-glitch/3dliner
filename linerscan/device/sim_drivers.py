@@ -5,7 +5,19 @@ from __future__ import annotations
 import numpy as np
 
 from ..sim.world import SimWorld, SweepCommand
-from .drivers import Buzzer, Camera, Clock, Drivers, FrameBlock, HeadMotor, Laser, Radio, RangeSensor, TempSensors
+from .drivers import (
+    Buzzer,
+    Camera,
+    Clock,
+    Drivers,
+    FrameBlock,
+    HeadMotor,
+    Laser,
+    Radio,
+    RangeFinder,
+    RangeSensor,
+    TempSensors,
+)
 
 
 class SimClock(Clock):
@@ -75,6 +87,14 @@ class SimToF(RangeSensor):
         return self._cache[1][self.index]
 
 
+class SimRangeFinder(RangeFinder):
+    def __init__(self, world: SimWorld, clock: SimClock):
+        self.world, self.clock = world, clock
+
+    def read(self) -> float:
+        return self.world.rangefinder_read(self.clock.now())
+
+
 class SimTemps(TempSensors):
     def __init__(self, world: SimWorld, clock: SimClock):
         self.world, self.clock = world, clock
@@ -114,4 +134,5 @@ def make_sim_drivers(world: SimWorld, radio_loss: float = 0.2) -> Drivers:
     clock = SimClock(world, buzzer)
     return Drivers(clock=clock, camera=SimCamera(world, clock), laser=SimLaser(world), head=SimHead(world, clock),
                    tof=(SimToF(world, clock, 0), SimToF(world, clock, 1)), temps=SimTemps(world, clock),
-                   buzzer=buzzer, radio=SimRadio(radio_loss, seed=world.seed + 7))
+                   buzzer=buzzer, radio=SimRadio(radio_loss, seed=world.seed + 7),
+                   rangefinder=SimRangeFinder(world, clock) if world.rangefinder is not None else None)

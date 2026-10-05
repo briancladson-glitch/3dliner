@@ -78,6 +78,8 @@ class ScanController:
             st = self.safety.update(t, ranges)
             d.buzzer.set(self.safety.buzzer_pattern)
             self.rec.tof(t, np.stack(ranges))
+            if d.rangefinder is not None:
+                self.rec.rangefinder(t, d.rangefinder.read())
             if self.safety.events and self.safety.events[-1][0] == t:
                 ev = self.safety.events[-1]
                 self.rec.event(t, "safety", f"{ev[1]} clearance={ev[2]:.0f}mm")
@@ -106,7 +108,8 @@ class ScanController:
                     self.safety.armed = True
                     d.head.start_sweep(c.sweep_rate_dps, c.sweep_accel_dps2, c.sweep_half_deg)
                     d.camera.start(c.frame_rate)
-                    self._set_state(t, "ARMED", f"soak {t - t_soak0:.0f}s dT/dt={rate:.2f}K/min")
+                    why = f"dT/dt {rate:.2f} K/min" if np.isfinite(rate) else "soak time limit"
+                    self._set_state(t, "ARMED", f"after {t - t_soak0:.0f} s soak ({why})")
             elif self.state == "ARMED":
                 if self.safety.closing_speed > c.motion_speed_mm_s:
                     t_motion = t_motion or t

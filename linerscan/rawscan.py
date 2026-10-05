@@ -20,6 +20,8 @@ class RawScan:
     temp_t: np.ndarray  # (N,)
     temps: np.ndarray  # (N, 3) camera, laser, battery °C
     events: list = field(default_factory=list)  # (t, kind, text)
+    rf_t: np.ndarray = field(default_factory=lambda: np.zeros(0))  # upward laser rangefinder (height reference)
+    rf: np.ndarray = field(default_factory=lambda: np.zeros(0))
 
     @property
     def n_frames(self) -> int:
@@ -28,14 +30,17 @@ class RawScan:
     def save(self, path: str | Path) -> None:
         np.savez_compressed(path, frame_t=self.frame_t, frame_theta=self.frame_theta, u=self.u.astype(np.float32),
                             tof_t=self.tof_t, tof=self.tof.astype(np.float32), temp_t=self.temp_t, temps=self.temps,
+                            rf_t=self.rf_t, rf=self.rf,
                             meta=np.array(json.dumps({"meta": self.meta, "events": self.events})))
 
     @classmethod
     def load(cls, path: str | Path) -> RawScan:
         d = np.load(path, allow_pickle=False)
         m = json.loads(str(d["meta"]))
+        rf_t = d["rf_t"] if "rf_t" in d else np.zeros(0)
+        rf = d["rf"] if "rf" in d else np.zeros(0)
         return cls(m["meta"], d["frame_t"], d["frame_theta"], d["u"].astype(float), d["tof_t"], d["tof"].astype(float),
-                   d["temp_t"], d["temps"], m["events"])
+                   d["temp_t"], d["temps"], m["events"], rf_t, rf)
 
 
 class RawScanWriter:
@@ -46,6 +51,7 @@ class RawScanWriter:
         self.ft, self.fth, self.fu = [], [], []
         self.tt, self.tr = [], []
         self.mt, self.mv = [], []
+        self.rt, self.rv = [], []
         self.events: list = []
 
     def frames(self, t, theta, u):
@@ -58,6 +64,10 @@ class RawScanWriter:
         self.tt.append(t)
         self.tr.append(np.asarray(ranges))
 
+    def rangefinder(self, t, v):
+        self.rt.append(t)
+        self.rv.append(v)
+
     def temps(self, t, v):
         self.mt.append(t)
         self.mv.append(np.asarray(v))
@@ -69,4 +79,5 @@ class RawScanWriter:
         cat = (lambda a, shape: np.concatenate(a) if a else np.zeros(shape))  # noqa: E731
         return RawScan(self.meta, cat(self.ft, (0,)), cat(self.fth, (0,)), cat(self.fu, (0, self.n_rows)),
                        np.array(self.tt), np.array(self.tr).reshape(-1, 2, 64), np.array(self.mt),
-                       np.array(self.mv).reshape(-1, 3), self.events)
+                       np.array(self.mv).reshape(-1, 3), self.events, np.array(self.rt, float),
+                       np.array(self.rv, float))

@@ -59,6 +59,14 @@ class RangeSensor(ABC):
         ...
 
 
+class RangeFinder(ABC):
+    """Upward narrow-beam laser distance module used as the height reference (not for safety)."""
+
+    @abstractmethod
+    def read(self) -> float:  # mm, NaN = no valid reading
+        ...
+
+
 class TempSensors(ABC):
     @abstractmethod
     def read(self) -> np.ndarray:  # [camera, laser, battery] °C
@@ -87,3 +95,4 @@ class Drivers:
     temps: TempSensors
     buzzer: Buzzer
     radio: Radio
+    rangefinder: RangeFinder | None = None

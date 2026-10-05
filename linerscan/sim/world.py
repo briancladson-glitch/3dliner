@@ -45,7 +45,7 @@ class ToFTruth:
     noise_rel: float = 0.0025
     p_invalid: float = 0.02
     max_range: float = 4000.0
-    valve_radius_frac: float = 0.18
+    valve_radius_frac: float = 0.21  # exhaust-valve disc ≈ 0.42 × bore
     dome_rise: float = 25.0
     failed: tuple[bool, bool] = (False, False)
 
@@ -57,27 +57,8 @@ class ToFTruth:
 
     def true_ranges(self, s_c: float, centre_xy, R_dev, e: EngineSpec) -> np.ndarray:
         dirs = self.zone_dirs() @ R_dev.T
-        out = np.empty((2, 64))
-        Rb = e.bore / 2
-        s_valve = e.crown_depth_tdc - e.overhead_clearance_tdc
-        for i, p in enumerate(self.positions):
-            O = R_dev @ np.array(p) + np.array([centre_xy[0], centre_xy[1], -s_c])
-            best = np.full(64, np.inf)
-            for s_plane, rmin, rmax in ((s_valve, 0.0, self.valve_radius_frac * e.bore),
-                                        (s_valve - self.dome_rise, self.valve_radius_frac * e.bore, Rb)):
-                t = (-s_plane - O[2]) / dirs[:, 2]
-                P = O + t[:, None] * dirs
-                rr = np.hypot(P[:, 0], P[:, 1])
-                ok = (t > 0) & (rr >= rmin) & (rr < rmax)
-                best = np.where(ok, np.minimum(best, t), best)
-            # liner / cover bore wall
-            A = dirs[:, 0] ** 2 + dirs[:, 1] ** 2
-            B = O[0] * dirs[:, 0] + O[1] * dirs[:, 1]
-            C = O[0] ** 2 + O[1] ** 2 - Rb**2
-            tw = (-B + np.sqrt(np.maximum(B**2 - A * C, 0))) / np.maximum(A, 1e-12)
-            best = np.minimum(best, tw)
-            out[i] = best
-        return out
+        return np.stack([overhead_ranges(R_dev @ np.array(p) + np.array([centre_xy[0], centre_xy[1], -s_c]), dirs, e,
+                                         self.valve_radius_frac, self.dome_rise) for p in self.positions])
 
     def read(self, s_c, centre_xy, R_dev, e: EngineSpec, rng) -> np.ndarray:
         r = self.true_ranges(s_c, centre_xy, R_dev, e)
@@ -87,6 +68,46 @@ class ToFTruth:
         bad = (rng.random(r.shape) < self.p_invalid) | (r > self.max_range)
         bad[np.array(self.failed)] = True
         return np.where(bad, np.nan, m)
+
+
+def overhead_ranges(O: np.ndarray, dirs: np.ndarray, e: EngineSpec, valve_radius_frac: float = 0.21,
+                    dome_rise: float = 25.0) -> np.ndarray:
+    """Ranges from point O (liner frame) along unit directions to the cover: exhaust-valve face (lowest),
+    cover dome (dome_rise higher) or the bore wall, whichever comes first."""
+    Rb = e.bore / 2
+    s_valve = e.crown_depth_tdc - e.overhead_clearance_tdc
+    best = np.full(len(dirs), np.inf)
+    for s_plane, rmin, rmax in ((s_valve, 0.0, valve_radius_frac * e.bore),
+                                (s_valve - dome_rise, valve_radius_frac * e.bore, Rb)):
+        t = (-s_plane - O[2]) / dirs[:, 2]
+        P = O + t[:, None] * dirs
+        rr = np.hypot(P[:, 0], P[:, 1])
+        ok = (t > 0) & (rr >= rmin) & (rr < rmax)
+        best = np.where(ok, np.minimum(best, t), best)
+    A = dirs[:, 0] ** 2 + dirs[:, 1] ** 2
+    B = O[0] * dirs[:, 0] + O[1] * dirs[:, 1]
+    C = O[0] ** 2 + O[1] ** 2 - Rb**2
+    tw = (-B + np.sqrt(np.maximum(B**2 - A * C, 0))) / np.maximum(A, 1e-12)
+    return np.minimum(best, tw)
+
+
+@dataclass
+class RangeFinderTruth:
+    """Upward narrow-beam laser distance module (height reference).  The device only moves vertically, so the
+    beam keeps hitting the same spot on the cover and the reading stays linear in the crown position."""
+    position: tuple = (100.0, 0.0, 19.0)
+    noise_mm: float = 1.0
+    bias: float = 1.5
+    scale: float = 1.0008
+    p_invalid: float = 0.01
+
+    def read(self, s_c, centre_xy, R_dev, e: EngineSpec, rng, valve_radius_frac=0.21, dome_rise=25.0) -> float:
+        O = R_dev @ np.array(self.position) + np.array([centre_xy[0], centre_xy[1], -s_c])
+        r = float(overhead_ranges(O, (R_dev @ np.array([0.0, 0.0, 1.0]))[None, :], e, valve_radius_frac,
+                                  dome_rise)[0])
+        if rng.random() < self.p_invalid:
+            return float("nan")
+        return r * self.scale + self.bias + self.noise_mm * float(rng.standard_normal())
 
 
 class EngineMotion:
@@ -179,6 +200,7 @@ class SimWorld:
     tof: ToFTruth
     motion: EngineMotion
     seed: int = 0
+    rangefinder: RangeFinderTruth | None = field(default_factory=RangeFinderTruth)
     sweep: SweepCommand | None = None
     laser_on: bool = False
     camera_enabled: bool = True  # False: skip rendering (safety-only simulations)
@@ -216,6 +238,13 @@ class SimWorld:
             self.tof.failed = (True, True)
         s_c = float(self.motion.crown_depth_at(t))
         return self.tof.read(s_c, self.centre(t), self.R_dev, self.engine, self.rng)
+
+    def rangefinder_read(self, t: float) -> float:
+        if self.rangefinder is None:
+            return float("nan")
+        s_c = float(self.motion.crown_depth_at(t))
+        return self.rangefinder.read(s_c, self.centre(t), self.R_dev, self.engine, self.rng,
+                                     self.tof.valve_radius_frac, self.tof.dome_rise)
 
     def true_clearance(self, t: float, device_height: float = 20.0) -> float:
         from ..config import DeviceSpec

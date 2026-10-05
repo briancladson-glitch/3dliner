@@ -123,8 +123,9 @@ class ProcessingConfig:
     outlier_iterations: int = 5
     min_points_per_band: int = 2000
     max_angle_gap_deg: float = 30.0
-    tilt_mode: str = "per_band"  # per_band | global
+    tilt_mode: str = "per_band"  # per_band (shape-aware local fit) | per_band_circular | global
     ellipse_flag_mm: float = 0.05  # flag if ellipse and Fourier max/min disagree by more
+    gradient_flag_mm: float = 0.10  # flag if the mean diameter changes more than this across a band
     map_angle_step_deg: float = 2.0
     map_depth_step: float = 10.0
 
