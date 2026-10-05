@@ -16,7 +16,7 @@ from dataclasses import dataclass
 import numpy as np
 from scipy.optimize import minimize_scalar
 
-from .fitting import fit_cylinder
+from .fitting import cylinder_distances, fit_cylinder, outlier_mask
 
 
 @dataclass
@@ -57,6 +57,7 @@ class RingCalibration:
     iterations: int
     rms: float
     offset_xy: tuple[float, float]
+    n_outliers: int = 0
 
 
 def calibrate_ring(z: np.ndarray, theta: np.ndarray, phi: np.ndarray, D_known: float, g0: HeadGeometry,
@@ -68,6 +69,15 @@ def calibrate_ring(z: np.ndarray, theta: np.ndarray, phi: np.ndarray, D_known: f
     −Σres²/σ² − (h − h_measured)²/σ_h², where σ is the point noise at h_measured.
     """
     g = HeadGeometry(g0.R0, h_measured, g0.H0)
+    # glints / reflections: mark points outside max(5·1.4826·MAD, 0.1 mm) of the cylinder and exclude them
+    keep = np.ones(np.size(z), bool)
+    P = device_points(z, theta, phi, g)
+    for _ in range(3):
+        c = fit_cylinder(P[keep])
+        d = cylinder_distances(P, c.point[0], c.point[1], c.direction[0] / c.direction[2],
+                               c.direction[1] / c.direction[2], c.z_ref) - c.R
+        keep = ~outlier_mask(d)
+    z, theta, phi = np.asarray(z)[keep], np.asarray(theta)[keep], np.broadcast_to(phi, np.shape(keep))[keep]
 
     def fit(gg):
         return fit_cylinder(device_points(z, theta, phi, gg))
@@ -91,4 +101,5 @@ def calibrate_ring(z: np.ndarray, theta: np.ndarray, phi: np.ndarray, D_known: f
         if abs(step) < tol:
             break
     c = fit(g)
-    return RingCalibration(g.R0, g.h, D_known, 2 * c.R, it, c.rms, (float(c.point[0]), float(c.point[1])))
+    return RingCalibration(g.R0, g.h, D_known, 2 * c.R, it, c.rms, (float(c.point[0]), float(c.point[1])),
+                           int((~keep).sum()))

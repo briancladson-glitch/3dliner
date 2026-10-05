@@ -19,16 +19,16 @@ class EngineSpec:
     bore: float = 980.0
     stroke: float = 2660.0
     conrod: float = 2885.0
-    crown_depth_tdc: float = 120.0  # crown (periphery) below liner top at TDC
-    overhead_clearance_tdc: float = 35.0  # crown to lowest cover / exhaust-valve feature at TDC
-    port_top_depth: float = 2450.0  # top edge of the scavenge ports below liner top
-    port_bottom_depth: float = 2800.0
+    crown_depth_tdc: float = 15.0  # crown (periphery) below liner top at TDC
+    overhead_clearance_tdc: float = 12.0  # crown to lowest cover / exhaust-valve feature at TDC
+    port_top_depth: float = 2400.0  # top edge of the scavenge ports below liner top
+    port_bottom_depth: float = 2700.0
     n_ports: int = 24
     port_width_deg: float = 11.0
     port_phase_deg: float = 7.5  # centre of first port, measured from FORE
     liner_cte: float = 11.0e-6  # grey cast iron, 1/K
     measuring_depths: list[float] = field(default_factory=lambda: [
-        90, 130, 170, 210, 250, 300, 400, 550, 700, 900, 1150, 1400, 1700, 2000, 2350])
+        40, 80, 120, 160, 200, 250, 300, 400, 550, 700, 900, 1150, 1400, 1700, 2000, 2300])
 
     @property
     def crank_radius(self) -> float:

@@ -213,8 +213,8 @@ def test_slider_crank_known_values():
 
 def test_stop_angle_leaves_margin():
     e, d = EngineSpec(), DeviceSpec()
-    st = plan_stop_angle(e, d, margin=40.0)
-    assert overhead_clearance(st, e, d) == pytest.approx(40.0, abs=1e-6)
+    st = plan_stop_angle(e, d, margin=60.0)
+    assert overhead_clearance(st, e, d) == pytest.approx(60.0, abs=1e-6)
     assert 0 < st < 90
 
 
@@ -224,7 +224,7 @@ def test_scan_plan_is_sane():
     assert plan.sweep_rate_dps > 0 and plan.angle_step_deg < 1.0
     assert plan.top_depth < 250  # strip reaches above the top-ring reversal zone
     assert plan.points_per_band_min > 5000
-    assert plan.alarm_clearance < 40.0 < plan.warn_clearance + 40
+    assert 10.0 <= plan.alarm_clearance < plan.warn_clearance < 60.0
 
 
 # ----------------------------------------------------------------------------- peak detection

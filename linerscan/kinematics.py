@@ -80,8 +80,8 @@ class ScanPlan:
 
 
 def plan_scan(e: EngineSpec, d: DeviceSpec, p: OpticalPreset, turning_gear_rpm: float = 0.1,
-              margin: float = 40.0, frame_rate: float = 200.0, coverage_margin: float = 0.75,
-              band: float = 30.0, reaction_s: float = 5.0) -> ScanPlan:
+              margin: float = 60.0, frame_rate: float = 200.0, coverage_margin: float = 0.75,
+              band: float = 30.0, reaction_s: float = 4.0, stop_time_s: float = 0.5) -> ScanPlan:
     """Size the sweep so every height is swept over the full ±190° while it is inside the laser strip."""
     stop = plan_stop_angle(e, d, margin)
     th = np.linspace(stop, 180.0, 2001)
@@ -97,11 +97,14 @@ def plan_scan(e: EngineSpec, d: DeviceSpec, p: OpticalPreset, turning_gear_rpm: 
     bottom = float(crown_depth(180.0, e) - d.optics_height)
     n_rows_per_mm = p.n_rows / strip
     pts = frame_rate * n_rows_per_mm * strip / vmax * band
-    # alarm when the remaining clearance would be used up within the operator's reaction time at the
-    # speed the piston has near the planned stop (speed falls towards TDC, so this is conservative)
+    # ALARM leaves room for the operator's reaction + turning-gear stop at the piston speed near the planned
+    # stop (×1.5; speed falls towards TDC so this is conservative).  WARN = just past the planned stop.
     v_stop = float(piston_speed(stop, e.stroke, e.conrod, turning_gear_rpm))
-    alarm = max(10.0, v_stop * reaction_s * 2.0)
-    warn = alarm + 0.5 * margin
+    alarm = max(10.0, 1.5 * v_stop * (reaction_s + stop_time_s))
+    warn = margin - 10.0
+    if warn < alarm + 5.0:
+        raise ValueError(f"stop margin {margin} mm too small for alarm level {alarm:.0f} mm: increase the margin "
+                         "or slow the turning gear")
     return ScanPlan(p.name, float(stop), turning_gear_rpm, float(duration), vmax, float(strip),
                     float(sweep_rate), frame_rate, float(sweep_rate / frame_rate), top, bottom, float(pts),
                     float(alarm), float(warn))
